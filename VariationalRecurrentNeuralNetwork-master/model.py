@@ -13,13 +13,15 @@ using unimodal isotropic gaussian distributions for
 inference, prior, and generating models."""
 
 class VRNN(nn.Module):
-	def __init__(self, x_dim, h_dim, z_dim, n_layers, bias=False):
+	def __init__(self, x_dim, h_dim, z_dim, n_layers, device, bias=False):
 		super(VRNN, self).__init__()
 
 		self.x_dim = x_dim
 		self.h_dim = h_dim
 		self.z_dim = z_dim
 		self.n_layers = n_layers
+		self.device = device
+		self.EPS = torch.finfo(torch.float).eps # very small values, avoid numerical problem during iterations
 
 		# 1. feature-extracting transformations (\phi function definition)
         # -----------------------------------------------------------------
@@ -90,8 +92,9 @@ class VRNN(nn.Module):
 		all_dec_mean, all_dec_std = [], []
 		kld_loss = 0
 		rec_loss = 0
+		rec_loss_fn = torch.nn.MSELoss(reduction='sum')
 
-		h = torch.zeros(self.n_layers, x.size(1), self.h_dim) # h:(n_layers, batch_size, h_dim), Default: 0
+		h = torch.zeros(self.n_layers, x.size(1), self.h_dim).to(self.device) # h:(n_layers, batch_size, h_dim), Default: 0
 		for t in range(x.size(0)):
 			phi_x_t = self.phi_x(x[t]) # x[t]:(batch_size, x_dim)
 
@@ -119,8 +122,10 @@ class VRNN(nn.Module):
 
 			# computing losses [negative ELBO = KL(q||p) + Recon_loss(\hat{x}, x)]
 			kld_loss += self._kld_gauss(enc_mean_t, enc_std_t, prior_mean_t, prior_std_t) # KL(q||p)
-			#rec_loss += self._nll_gauss(dec_mean_t, dec_std_t, x[t]) # loss for continuous data
-			rec_loss += self._nll_bernoulli(dec_mean_t, x[t]) # loss for binary data
+			# rec_loss += self._nll_gauss(dec_mean_t, dec_std_t, x[t]) # loss for continuous data
+			# rec_loss += self._nll_bernoulli(dec_mean_t, x[t]) # loss for binary data
+
+			rec_loss += rec_loss_fn(dec_mean_t, x[t]) # Prevent from NaN [log(0)]
 
 			all_enc_std.append(enc_std_t)
 			all_enc_mean.append(enc_mean_t)
@@ -132,9 +137,9 @@ class VRNN(nn.Module):
 
 	def sample(self, seq_len):
 
-		sample = torch.zeros(seq_len, self.x_dim)
+		sample = torch.zeros(seq_len, self.x_dim).to(self.device)
 
-		h = torch.zeros(self.n_layers, 1, self.h_dim)
+		h = torch.zeros(self.n_layers, 1, self.h_dim).to(self.device)
 		for t in range(seq_len):
 			#prior
 			prior_t = self.prior(h[-1])
@@ -183,10 +188,9 @@ class VRNN(nn.Module):
 			std_2.pow(2) - 1)
 		return	0.5 * torch.sum(kld_element)
 
-
 	def _nll_bernoulli(self, theta, x):
-		return - torch.sum(x*torch.log(theta) + (1-x)*torch.log(1-theta))
-
+		return -torch.sum(x * torch.log(theta + self.EPS) + (1 - x) * torch.log(1 - theta - self.EPS))
 
 	def _nll_gauss(self, mean, std, x):
-		pass
+		return torch.sum(torch.log(std + EPS) + torch.log(2 * torch.pi) / 2 + (x - mean).pow(2)/(2 * std.pow(2)))
+
