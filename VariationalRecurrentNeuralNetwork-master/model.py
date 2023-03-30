@@ -21,7 +21,7 @@ class VRNN(nn.Module):
 		self.z_dim = z_dim
 		self.n_layers = n_layers
 		self.device = device
-		self.EPS = torch.finfo(torch.float).eps # very small values, avoid numerical problem during iterations
+		self.EPS = torch.tensor(1e-6) # very small values, avoid numerical problem during iterations
 
 		# 1. feature-extracting transformations (\phi function definition)
         # -----------------------------------------------------------------
@@ -123,9 +123,9 @@ class VRNN(nn.Module):
 			# computing losses [negative ELBO = KL(q||p) + Recon_loss(\hat{x}, x)]
 			kld_loss += self._kld_gauss(enc_mean_t, enc_std_t, prior_mean_t, prior_std_t) # KL(q||p)
 			# rec_loss += self._nll_gauss(dec_mean_t, dec_std_t, x[t]) # loss for continuous data
-			# rec_loss += self._nll_bernoulli(dec_mean_t, x[t]) # loss for binary data
+			rec_loss += self._nll_bernoulli(dec_mean_t, x[t]) # loss for binary data
 
-			rec_loss += rec_loss_fn(dec_mean_t, x[t]) # Prevent from NaN [log(0)]
+			# rec_loss += rec_loss_fn(dec_mean_t, x[t]) # Prevent from NaN [log(0)]
 
 			all_enc_std.append(enc_std_t)
 			all_enc_mean.append(enc_mean_t)
@@ -192,5 +192,5 @@ class VRNN(nn.Module):
 		return -torch.sum(x * torch.log(theta + self.EPS) + (1 - x) * torch.log(1 - theta - self.EPS))
 
 	def _nll_gauss(self, mean, std, x):
-		return torch.sum(torch.log(std + EPS) + torch.log(2 * torch.pi) / 2 + (x - mean).pow(2)/(2 * std.pow(2)))
+		return torch.sum(torch.log(std) + torch.log(2 * torch.tensor(torch.pi)) / 2 + (x - mean).pow(2)/(2 * std.pow(2)))
 
